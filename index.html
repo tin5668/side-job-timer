@@ -53,6 +53,14 @@
     color: var(--text-dim);
     margin-top: 4px;
   }
+  .sync-status {
+    font-size: 0.75rem;
+    margin-top: 4px;
+    color: var(--text-dim);
+  }
+  .sync-status.synced { color: var(--success); }
+  .sync-status.syncing { color: var(--warning); }
+  .sync-status.error { color: var(--danger); }
 
   /* ===== Tabs ===== */
   .tab-bar {
@@ -457,6 +465,31 @@
     transform: translateX(-50%) translateY(0);
   }
 
+  /* ===== Loading overlay ===== */
+  .loading-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 15, 26, 0.7);
+    z-index: 500;
+    justify-content: center;
+    align-items: center;
+  }
+  .loading-overlay.show {
+    display: flex;
+  }
+  .loading-spinner {
+    width: 40px;
+    height: 40px;
+    border: 4px solid var(--border);
+    border-top-color: var(--primary);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+
   /* ===== Responsive ===== */
   @media (min-width: 768px) {
     .timer-time { font-size: 5rem; }
@@ -473,6 +506,7 @@
 <div class="header">
   <h1>副業タイムトラッカー</h1>
   <div class="date-display" id="currentDate"></div>
+  <div class="sync-status" id="syncStatus">同期確認中...</div>
 </div>
 
 <!-- Tab Bar -->
@@ -573,11 +607,20 @@
 
 </div>
 
+<!-- Loading overlay -->
+<div class="loading-overlay" id="loadingOverlay">
+  <div class="loading-spinner"></div>
+</div>
+
 <!-- Toast -->
 <div class="toast" id="toast"></div>
 
 <script>
+// ===== Config =====
+const GAS_URL = 'https://script.google.com/macros/s/AKfycby1XBRdyfLsATDenHsvcwX0-guaVzcQEhgvqxjwVOvp-r5nRlhXxslSuGVFLSYhett1/exec';
+
 // ===== State =====
+let sessions = [];
 let timerInterval = null;
 let timerStart = null;
 let pomoInterval = null;
@@ -591,14 +634,17 @@ const BREAK_DURATION = 5 * 60;
 const CIRCUMFERENCE = 2 * Math.PI * 100;
 
 // ===== Init =====
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
   updateDateDisplay();
-  updateTodaySummary();
-  renderRecords();
   setupTabs();
   restoreTimerState();
   updatePomoCircleSize();
   window.addEventListener('resize', updatePomoCircleSize);
+
+  // Load data from cloud
+  await loadFromCloud();
+  updateTodaySummary();
+  renderRecords();
 });
 
 function updatePomoCircleSize() {
@@ -610,6 +656,91 @@ function updatePomoCircleSize() {
   svg.setAttribute('height', size);
 }
 
+// ===== Cloud Sync =====
+function setSyncStatus(status, text) {
+  const el = document.getElementById('syncStatus');
+  el.textContent = text;
+  el.className = 'sync-status ' + status;
+}
+
+function showLoading(show) {
+  document.getElementById('loadingOverlay').classList.toggle('show', show);
+}
+
+async function loadFromCloud() {
+  setSyncStatus('syncing', '同期中...');
+  try {
+    const res = await fetch(GAS_URL);
+    const data = await res.json();
+    // Convert spreadsheet data to proper format
+    sessions = data.map(row => ({
+      id: String(row.id || ''),
+      date: String(row.date || ''),
+      startTime: String(row.startTime || ''),
+      endTime: String(row.endTime || ''),
+      duration: 0, // will be calculated
+      memo: String(row.memo || '')
+    })).filter(s => s.id && s.startTime && s.endTime);
+
+    // Calculate duration from startTime/endTime
+    sessions.forEach(s => {
+      const start = new Date(s.startTime);
+      const end = new Date(s.endTime);
+      s.duration = end.getTime() - start.getTime();
+    });
+
+    // Also save to local as cache
+    localStorage.setItem('sjt_sessions', JSON.stringify(sessions));
+    setSyncStatus('synced', '✓ クラウド同期済み');
+  } catch (e) {
+    console.error('Cloud load failed:', e);
+    // Fallback to local
+    try {
+      sessions = JSON.parse(localStorage.getItem('sjt_sessions') || '[]');
+    } catch { sessions = []; }
+    setSyncStatus('error', '✗ オフライン（ローカルデータ使用中）');
+  }
+}
+
+async function saveToCloud(session) {
+  setSyncStatus('syncing', '保存中...');
+  try {
+    await fetch(GAS_URL, {
+      method: 'POST',
+      mode: 'no-cors',
+      headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify({
+        action: 'add',
+        id: session.id,
+        date: session.date,
+        startTime: session.startTime,
+        endTime: session.endTime,
+        memo: session.memo
+      })
+    });
+    setSyncStatus('synced', '✓ クラウド同期済み');
+  } catch (e) {
+    console.error('Cloud save failed:', e);
+    setSyncStatus('error', '✗ 保存失敗（ローカルに保存済み）');
+  }
+}
+
+async function deleteFromCloud(id) {
+  setSyncStatus('syncing', '削除中...');
+  try {
+    await fetch(GAS_URL, {
+      method: 'POST',
+      mode: 'no-cors',
+      headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify({ action: 'delete', id: id })
+    });
+    setSyncStatus('synced', '✓ クラウド同期済み');
+  } catch (e) {
+    console.error('Cloud delete failed:', e);
+    setSyncStatus('error', '✗ 削除失敗');
+  }
+}
+
 // ===== Tabs =====
 function setupTabs() {
   document.querySelectorAll('.tab-btn').forEach(btn => {
@@ -618,6 +749,7 @@ function setupTabs() {
       document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
       btn.classList.add('active');
       document.getElementById('page-' + btn.dataset.tab).classList.add('active');
+      if (btn.dataset.tab === 'records') renderRecords();
     });
   });
 }
@@ -644,7 +776,7 @@ function startTimer() {
   showToast('作業を開始しました');
 }
 
-function stopTimer() {
+async function stopTimer() {
   if (!timerStart) return;
   clearInterval(timerInterval);
 
@@ -661,9 +793,14 @@ function stopTimer() {
     memo: memo
   };
 
-  saveSession(session);
+  // Save to local
+  sessions.push(session);
+  localStorage.setItem('sjt_sessions', JSON.stringify(sessions));
 
-  // Reset
+  // Save to cloud
+  saveToCloud(session);
+
+  // Reset UI
   timerStart = null;
   localStorage.removeItem('sjt_timerStart');
   document.getElementById('timerDisplay').textContent = '00:00:00';
@@ -760,7 +897,6 @@ function updatePomoDisplay() {
   document.getElementById('pomoDisplay').textContent =
     String(mins).padStart(2, '0') + ':' + String(secs).padStart(2, '0');
 
-  // Progress circle
   const total = pomoIsWork ? WORK_DURATION : BREAK_DURATION;
   const progress = 1 - (pomoRemaining / total);
   const offset = CIRCUMFERENCE * (1 - progress);
@@ -768,12 +904,10 @@ function updatePomoDisplay() {
   progressEl.style.strokeDashoffset = offset;
   progressEl.style.stroke = pomoIsWork ? 'var(--primary)' : 'var(--success)';
 
-  // Label
   const label = document.getElementById('pomoLabel');
   label.textContent = pomoIsWork ? '作業タイム' : '休憩タイム';
   label.className = 'pomo-label ' + (pomoIsWork ? 'work' : 'break');
 
-  // Stats
   document.getElementById('pomoCount').textContent = pomoCompletedSets;
   document.getElementById('pomoTotalWork').textContent = Math.floor(pomoTotalWorkSeconds / 60) + '分';
 }
@@ -805,34 +939,21 @@ function playNotification() {
 }
 
 // ===== Storage =====
-function getSessions() {
-  try {
-    return JSON.parse(localStorage.getItem('sjt_sessions') || '[]');
-  } catch { return []; }
-}
-
-function saveSession(session) {
-  const sessions = getSessions();
-  sessions.push(session);
+async function deleteSession(id) {
+  sessions = sessions.filter(s => s.id !== id);
   localStorage.setItem('sjt_sessions', JSON.stringify(sessions));
-}
-
-function deleteSession(id) {
-  const sessions = getSessions().filter(s => s.id !== id);
-  localStorage.setItem('sjt_sessions', JSON.stringify(sessions));
+  deleteFromCloud(id);
   renderRecords();
   updateTodaySummary();
 }
 
 // ===== Records =====
 function renderRecords() {
-  const sessions = getSessions();
   const filterDate = document.getElementById('dateFilter').value;
   const filtered = filterDate
     ? sessions.filter(s => s.date === filterDate)
-    : sessions;
+    : [...sessions];
 
-  // Sort newest first
   filtered.sort((a, b) => new Date(b.startTime) - new Date(a.startTime));
 
   const list = document.getElementById('recordList');
@@ -867,14 +988,13 @@ function renderRecords() {
 
 function updateTodaySummary() {
   const today = toDateStr(new Date());
-  const sessions = getSessions().filter(s => s.date === today);
-  const total = sessions.reduce((sum, s) => sum + s.duration, 0);
-  document.getElementById('todaySessions').textContent = sessions.length;
+  const todaySessions = sessions.filter(s => s.date === today);
+  const total = todaySessions.reduce((sum, s) => sum + s.duration, 0);
+  document.getElementById('todaySessions').textContent = todaySessions.length;
   document.getElementById('todayTotal').textContent = formatDuration(total);
 }
 
 function exportCSV() {
-  const sessions = getSessions();
   if (sessions.length === 0) {
     showToast('エクスポートするデータがありません');
     return;
