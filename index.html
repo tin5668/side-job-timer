@@ -1,0 +1,952 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>副業タイムトラッカー</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  :root {
+    --bg: #0f0f1a;
+    --surface: #1a1a2e;
+    --surface2: #222240;
+    --primary: #6c5ce7;
+    --primary-light: #a29bfe;
+    --accent: #00cec9;
+    --danger: #ff6b6b;
+    --text: #e0e0e0;
+    --text-dim: #888;
+    --border: #333355;
+    --success: #00b894;
+    --warning: #fdcb6e;
+    --radius: 16px;
+  }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Hiragino Sans', 'Noto Sans JP', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    min-height: 100dvh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* ===== Header ===== */
+  .header {
+    text-align: center;
+    padding: 20px 16px 12px;
+    background: linear-gradient(135deg, var(--surface), var(--surface2));
+    border-bottom: 1px solid var(--border);
+  }
+  .header h1 {
+    font-size: 1.3rem;
+    font-weight: 700;
+    background: linear-gradient(135deg, var(--primary-light), var(--accent));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+  .header .date-display {
+    font-size: 0.85rem;
+    color: var(--text-dim);
+    margin-top: 4px;
+  }
+
+  /* ===== Tabs ===== */
+  .tab-bar {
+    display: flex;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+  .tab-btn {
+    flex: 1;
+    padding: 14px 8px;
+    background: none;
+    border: none;
+    color: var(--text-dim);
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+    position: relative;
+    transition: color 0.2s;
+  }
+  .tab-btn.active {
+    color: var(--primary-light);
+  }
+  .tab-btn.active::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 20%;
+    width: 60%;
+    height: 3px;
+    background: var(--primary);
+    border-radius: 3px 3px 0 0;
+  }
+  .tab-btn .tab-icon {
+    display: block;
+    font-size: 1.2rem;
+    margin-bottom: 2px;
+  }
+
+  /* ===== Main Content ===== */
+  .main {
+    flex: 1;
+    padding: 16px;
+    max-width: 600px;
+    width: 100%;
+    margin: 0 auto;
+    padding-bottom: 32px;
+  }
+  .page { display: none; }
+  .page.active { display: block; }
+
+  /* ===== Timer Page ===== */
+  .timer-display {
+    text-align: center;
+    padding: 32px 0;
+  }
+  .timer-time {
+    font-size: 3.5rem;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 2px;
+    color: var(--text);
+  }
+  .timer-status {
+    font-size: 1rem;
+    color: var(--text-dim);
+    margin-top: 8px;
+  }
+  .timer-status.recording {
+    color: var(--danger);
+    animation: pulse 1.5s infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+
+  .timer-buttons {
+    display: flex;
+    gap: 16px;
+    justify-content: center;
+    margin-top: 24px;
+  }
+
+  .btn {
+    padding: 16px 32px;
+    border: none;
+    border-radius: var(--radius);
+    font-size: 1.1rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition: transform 0.1s, box-shadow 0.2s;
+    min-width: 140px;
+  }
+  .btn:active {
+    transform: scale(0.96);
+  }
+  .btn-start {
+    background: linear-gradient(135deg, var(--primary), #5a4bd1);
+    color: #fff;
+    box-shadow: 0 4px 20px rgba(108, 92, 231, 0.4);
+  }
+  .btn-stop {
+    background: linear-gradient(135deg, var(--danger), #ee5a24);
+    color: #fff;
+    box-shadow: 0 4px 20px rgba(255, 107, 107, 0.4);
+  }
+  .btn-secondary {
+    background: var(--surface2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    box-shadow: none;
+  }
+  .btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+    transform: none;
+  }
+
+  /* Memo input */
+  .memo-section {
+    margin-top: 24px;
+  }
+  .memo-section label {
+    display: block;
+    font-size: 0.9rem;
+    color: var(--text-dim);
+    margin-bottom: 8px;
+  }
+  .memo-input {
+    width: 100%;
+    padding: 12px 16px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    color: var(--text);
+    font-size: 0.95rem;
+    resize: vertical;
+    min-height: 60px;
+    font-family: inherit;
+  }
+  .memo-input:focus {
+    outline: none;
+    border-color: var(--primary);
+  }
+
+  /* Today summary */
+  .today-summary {
+    margin-top: 24px;
+    padding: 16px;
+    background: var(--surface);
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+  }
+  .today-summary h3 {
+    font-size: 0.9rem;
+    color: var(--text-dim);
+    margin-bottom: 12px;
+  }
+  .summary-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 6px 0;
+    font-size: 0.95rem;
+  }
+  .summary-value {
+    font-weight: 700;
+    color: var(--accent);
+  }
+
+  /* ===== Pomodoro Page ===== */
+  .pomo-display {
+    text-align: center;
+    padding: 24px 0;
+  }
+  .pomo-circle {
+    width: 220px;
+    height: 220px;
+    margin: 0 auto;
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .pomo-circle svg {
+    position: absolute;
+    top: 0;
+    left: 0;
+    transform: rotate(-90deg);
+  }
+  .pomo-circle .pomo-track {
+    fill: none;
+    stroke: var(--surface2);
+    stroke-width: 8;
+  }
+  .pomo-circle .pomo-progress {
+    fill: none;
+    stroke: var(--primary);
+    stroke-width: 8;
+    stroke-linecap: round;
+    transition: stroke-dashoffset 1s linear, stroke 0.3s;
+  }
+  .pomo-time {
+    font-size: 3rem;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    z-index: 1;
+  }
+  .pomo-label {
+    font-size: 1.1rem;
+    color: var(--text-dim);
+    margin-top: 16px;
+    font-weight: 600;
+  }
+  .pomo-label.work { color: var(--primary-light); }
+  .pomo-label.break { color: var(--success); }
+
+  .pomo-buttons {
+    display: flex;
+    gap: 12px;
+    justify-content: center;
+    margin-top: 24px;
+  }
+  .btn-pomo-start {
+    background: linear-gradient(135deg, var(--primary), #5a4bd1);
+    color: #fff;
+    box-shadow: 0 4px 20px rgba(108, 92, 231, 0.3);
+  }
+  .btn-pomo-reset {
+    background: var(--surface2);
+    color: var(--text);
+    border: 1px solid var(--border);
+  }
+
+  .pomo-stats {
+    display: flex;
+    justify-content: center;
+    gap: 24px;
+    margin-top: 24px;
+  }
+  .pomo-stat {
+    text-align: center;
+  }
+  .pomo-stat-value {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--accent);
+  }
+  .pomo-stat-label {
+    font-size: 0.8rem;
+    color: var(--text-dim);
+    margin-top: 2px;
+  }
+
+  /* ===== Records Page ===== */
+  .records-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 16px;
+  }
+  .records-header h2 {
+    font-size: 1.1rem;
+  }
+  .date-filter {
+    padding: 8px 12px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    color: var(--text);
+    font-size: 0.9rem;
+    font-family: inherit;
+  }
+  .date-filter:focus {
+    outline: none;
+    border-color: var(--primary);
+  }
+
+  .records-total {
+    padding: 14px 16px;
+    background: linear-gradient(135deg, var(--surface), var(--surface2));
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    margin-bottom: 16px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .records-total-label {
+    font-size: 0.9rem;
+    color: var(--text-dim);
+  }
+  .records-total-value {
+    font-size: 1.3rem;
+    font-weight: 700;
+    color: var(--accent);
+  }
+
+  .record-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .record-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px 16px;
+    transition: border-color 0.2s;
+  }
+  .record-card:hover {
+    border-color: var(--primary);
+  }
+  .record-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 6px;
+  }
+  .record-date {
+    font-size: 0.8rem;
+    color: var(--text-dim);
+  }
+  .record-duration {
+    font-size: 1rem;
+    font-weight: 700;
+    color: var(--primary-light);
+  }
+  .record-times {
+    font-size: 0.85rem;
+    color: var(--text-dim);
+  }
+  .record-memo {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid var(--border);
+    font-size: 0.85rem;
+    color: var(--text);
+    line-height: 1.5;
+  }
+  .record-delete {
+    background: none;
+    border: none;
+    color: var(--text-dim);
+    cursor: pointer;
+    font-size: 0.8rem;
+    padding: 4px 8px;
+    border-radius: 6px;
+    transition: color 0.2s, background 0.2s;
+  }
+  .record-delete:hover {
+    color: var(--danger);
+    background: rgba(255, 107, 107, 0.1);
+  }
+
+  .empty-state {
+    text-align: center;
+    padding: 48px 16px;
+    color: var(--text-dim);
+  }
+  .empty-state .empty-icon {
+    font-size: 3rem;
+    margin-bottom: 12px;
+  }
+
+  .export-btn {
+    margin-top: 16px;
+    width: 100%;
+    padding: 12px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    color: var(--text);
+    font-size: 0.9rem;
+    cursor: pointer;
+    font-family: inherit;
+    font-weight: 600;
+  }
+  .export-btn:hover {
+    border-color: var(--primary);
+  }
+
+  /* ===== Notification Toast ===== */
+  .toast {
+    position: fixed;
+    top: 20px;
+    left: 50%;
+    transform: translateX(-50%) translateY(-100px);
+    background: var(--surface2);
+    border: 1px solid var(--primary);
+    padding: 12px 24px;
+    border-radius: 12px;
+    font-size: 0.9rem;
+    z-index: 1000;
+    transition: transform 0.3s ease;
+    text-align: center;
+    max-width: 90%;
+  }
+  .toast.show {
+    transform: translateX(-50%) translateY(0);
+  }
+
+  /* ===== Responsive ===== */
+  @media (min-width: 768px) {
+    .timer-time { font-size: 5rem; }
+    .pomo-time { font-size: 3.5rem; }
+    .pomo-circle { width: 260px; height: 260px; }
+    .main { padding: 24px; }
+    .btn { min-width: 160px; padding: 18px 40px; }
+  }
+</style>
+</head>
+<body>
+
+<!-- Header -->
+<div class="header">
+  <h1>副業タイムトラッカー</h1>
+  <div class="date-display" id="currentDate"></div>
+</div>
+
+<!-- Tab Bar -->
+<div class="tab-bar">
+  <button class="tab-btn active" data-tab="timer">
+    <span class="tab-icon">⏱</span>タイマー
+  </button>
+  <button class="tab-btn" data-tab="pomodoro">
+    <span class="tab-icon">🍅</span>ポモドーロ
+  </button>
+  <button class="tab-btn" data-tab="records">
+    <span class="tab-icon">📋</span>記録
+  </button>
+</div>
+
+<!-- Main Content -->
+<div class="main">
+
+  <!-- Timer Page -->
+  <div class="page active" id="page-timer">
+    <div class="timer-display">
+      <div class="timer-time" id="timerDisplay">00:00:00</div>
+      <div class="timer-status" id="timerStatus">停止中</div>
+    </div>
+
+    <div class="timer-buttons">
+      <button class="btn btn-start" id="btnStart" onclick="startTimer()">開始</button>
+      <button class="btn btn-stop" id="btnStop" onclick="stopTimer()" disabled>終了</button>
+    </div>
+
+    <div class="memo-section">
+      <label for="memoInput">メモ（任意）</label>
+      <textarea class="memo-input" id="memoInput" placeholder="今日の作業内容や気づきを記録..."></textarea>
+    </div>
+
+    <div class="today-summary" id="todaySummary">
+      <h3>今日のまとめ</h3>
+      <div class="summary-row">
+        <span>セッション数</span>
+        <span class="summary-value" id="todaySessions">0</span>
+      </div>
+      <div class="summary-row">
+        <span>合計作業時間</span>
+        <span class="summary-value" id="todayTotal">0時間0分</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Pomodoro Page -->
+  <div class="page" id="page-pomodoro">
+    <div class="pomo-display">
+      <div class="pomo-circle">
+        <svg width="220" height="220" viewBox="0 0 220 220" id="pomoSvg">
+          <circle class="pomo-track" cx="110" cy="110" r="100" />
+          <circle class="pomo-progress" cx="110" cy="110" r="100"
+            id="pomoProgress"
+            stroke-dasharray="628.32"
+            stroke-dashoffset="0" />
+        </svg>
+        <div class="pomo-time" id="pomoDisplay">25:00</div>
+      </div>
+      <div class="pomo-label work" id="pomoLabel">作業タイム</div>
+    </div>
+
+    <div class="pomo-buttons">
+      <button class="btn btn-pomo-start" id="btnPomo" onclick="togglePomodoro()">スタート</button>
+      <button class="btn btn-pomo-reset" onclick="resetPomodoro()">リセット</button>
+    </div>
+
+    <div class="pomo-stats">
+      <div class="pomo-stat">
+        <div class="pomo-stat-value" id="pomoCount">0</div>
+        <div class="pomo-stat-label">完了セット</div>
+      </div>
+      <div class="pomo-stat">
+        <div class="pomo-stat-value" id="pomoTotalWork">0分</div>
+        <div class="pomo-stat-label">作業時間</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Records Page -->
+  <div class="page" id="page-records">
+    <div class="records-header">
+      <h2>作業記録</h2>
+      <input type="date" class="date-filter" id="dateFilter" onchange="renderRecords()">
+    </div>
+
+    <div class="records-total">
+      <span class="records-total-label">表示中の合計</span>
+      <span class="records-total-value" id="filteredTotal">0時間0分</span>
+    </div>
+
+    <div class="record-list" id="recordList"></div>
+
+    <button class="export-btn" onclick="exportCSV()">CSVエクスポート</button>
+  </div>
+
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<script>
+// ===== State =====
+let timerInterval = null;
+let timerStart = null;
+let pomoInterval = null;
+let pomoRemaining = 25 * 60;
+let pomoIsWork = true;
+let pomoRunning = false;
+let pomoCompletedSets = 0;
+let pomoTotalWorkSeconds = 0;
+const WORK_DURATION = 25 * 60;
+const BREAK_DURATION = 5 * 60;
+const CIRCUMFERENCE = 2 * Math.PI * 100;
+
+// ===== Init =====
+document.addEventListener('DOMContentLoaded', () => {
+  updateDateDisplay();
+  updateTodaySummary();
+  renderRecords();
+  setupTabs();
+  restoreTimerState();
+  updatePomoCircleSize();
+  window.addEventListener('resize', updatePomoCircleSize);
+});
+
+function updatePomoCircleSize() {
+  const svg = document.getElementById('pomoSvg');
+  const container = document.querySelector('.pomo-circle');
+  if (!svg || !container) return;
+  const size = container.offsetWidth;
+  svg.setAttribute('width', size);
+  svg.setAttribute('height', size);
+}
+
+// ===== Tabs =====
+function setupTabs() {
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+      btn.classList.add('active');
+      document.getElementById('page-' + btn.dataset.tab).classList.add('active');
+    });
+  });
+}
+
+// ===== Date Display =====
+function updateDateDisplay() {
+  const now = new Date();
+  const opts = { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' };
+  document.getElementById('currentDate').textContent = now.toLocaleDateString('ja-JP', opts);
+}
+
+// ===== Timer =====
+function startTimer() {
+  timerStart = Date.now();
+  localStorage.setItem('sjt_timerStart', timerStart);
+
+  document.getElementById('btnStart').disabled = true;
+  document.getElementById('btnStop').disabled = false;
+  document.getElementById('timerStatus').textContent = '記録中';
+  document.getElementById('timerStatus').classList.add('recording');
+
+  timerInterval = setInterval(updateTimerDisplay, 1000);
+  updateTimerDisplay();
+  showToast('作業を開始しました');
+}
+
+function stopTimer() {
+  if (!timerStart) return;
+  clearInterval(timerInterval);
+
+  const endTime = Date.now();
+  const duration = endTime - timerStart;
+  const memo = document.getElementById('memoInput').value.trim();
+
+  const session = {
+    id: generateId(),
+    date: toDateStr(new Date(timerStart)),
+    startTime: new Date(timerStart).toISOString(),
+    endTime: new Date(endTime).toISOString(),
+    duration: duration,
+    memo: memo
+  };
+
+  saveSession(session);
+
+  // Reset
+  timerStart = null;
+  localStorage.removeItem('sjt_timerStart');
+  document.getElementById('timerDisplay').textContent = '00:00:00';
+  document.getElementById('btnStart').disabled = false;
+  document.getElementById('btnStop').disabled = true;
+  document.getElementById('timerStatus').textContent = '停止中';
+  document.getElementById('timerStatus').classList.remove('recording');
+  document.getElementById('memoInput').value = '';
+
+  updateTodaySummary();
+  showToast('作業を記録しました (' + formatDuration(duration) + ')');
+}
+
+function restoreTimerState() {
+  const saved = localStorage.getItem('sjt_timerStart');
+  if (saved) {
+    timerStart = parseInt(saved);
+    document.getElementById('btnStart').disabled = true;
+    document.getElementById('btnStop').disabled = false;
+    document.getElementById('timerStatus').textContent = '記録中';
+    document.getElementById('timerStatus').classList.add('recording');
+    timerInterval = setInterval(updateTimerDisplay, 1000);
+    updateTimerDisplay();
+  }
+}
+
+function updateTimerDisplay() {
+  if (!timerStart) return;
+  const elapsed = Date.now() - timerStart;
+  document.getElementById('timerDisplay').textContent = formatTime(elapsed);
+}
+
+// ===== Pomodoro =====
+function togglePomodoro() {
+  if (pomoRunning) {
+    pausePomodoro();
+  } else {
+    startPomodoro();
+  }
+}
+
+function startPomodoro() {
+  pomoRunning = true;
+  document.getElementById('btnPomo').textContent = '一時停止';
+
+  pomoInterval = setInterval(() => {
+    pomoRemaining--;
+    if (pomoIsWork) pomoTotalWorkSeconds++;
+
+    updatePomoDisplay();
+
+    if (pomoRemaining <= 0) {
+      clearInterval(pomoInterval);
+      playNotification();
+
+      if (pomoIsWork) {
+        pomoCompletedSets++;
+        pomoIsWork = false;
+        pomoRemaining = BREAK_DURATION;
+        showToast('お疲れさま！5分休憩しましょう');
+      } else {
+        pomoIsWork = true;
+        pomoRemaining = WORK_DURATION;
+        showToast('休憩終了！作業を再開しましょう');
+      }
+
+      updatePomoDisplay();
+      pomoRunning = false;
+      document.getElementById('btnPomo').textContent = 'スタート';
+    }
+  }, 1000);
+}
+
+function pausePomodoro() {
+  clearInterval(pomoInterval);
+  pomoRunning = false;
+  document.getElementById('btnPomo').textContent = 'スタート';
+}
+
+function resetPomodoro() {
+  clearInterval(pomoInterval);
+  pomoRunning = false;
+  pomoIsWork = true;
+  pomoRemaining = WORK_DURATION;
+  pomoCompletedSets = 0;
+  pomoTotalWorkSeconds = 0;
+  document.getElementById('btnPomo').textContent = 'スタート';
+  updatePomoDisplay();
+}
+
+function updatePomoDisplay() {
+  const mins = Math.floor(pomoRemaining / 60);
+  const secs = pomoRemaining % 60;
+  document.getElementById('pomoDisplay').textContent =
+    String(mins).padStart(2, '0') + ':' + String(secs).padStart(2, '0');
+
+  // Progress circle
+  const total = pomoIsWork ? WORK_DURATION : BREAK_DURATION;
+  const progress = 1 - (pomoRemaining / total);
+  const offset = CIRCUMFERENCE * (1 - progress);
+  const progressEl = document.getElementById('pomoProgress');
+  progressEl.style.strokeDashoffset = offset;
+  progressEl.style.stroke = pomoIsWork ? 'var(--primary)' : 'var(--success)';
+
+  // Label
+  const label = document.getElementById('pomoLabel');
+  label.textContent = pomoIsWork ? '作業タイム' : '休憩タイム';
+  label.className = 'pomo-label ' + (pomoIsWork ? 'work' : 'break');
+
+  // Stats
+  document.getElementById('pomoCount').textContent = pomoCompletedSets;
+  document.getElementById('pomoTotalWork').textContent = Math.floor(pomoTotalWorkSeconds / 60) + '分';
+}
+
+function playNotification() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const notes = [523.25, 659.25, 783.99];
+    notes.forEach((freq, i) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.frequency.value = freq;
+      osc.type = 'sine';
+      gain.gain.value = 0.3;
+      osc.start(ctx.currentTime + i * 0.2);
+      osc.stop(ctx.currentTime + i * 0.2 + 0.2);
+    });
+  } catch (e) {}
+
+  if ('Notification' in window && Notification.permission === 'granted') {
+    new Notification('副業タイムトラッカー', {
+      body: pomoIsWork ? 'お疲れさま！休憩しましょう' : '休憩終了！作業を再開しましょう'
+    });
+  } else if ('Notification' in window && Notification.permission !== 'denied') {
+    Notification.requestPermission();
+  }
+}
+
+// ===== Storage =====
+function getSessions() {
+  try {
+    return JSON.parse(localStorage.getItem('sjt_sessions') || '[]');
+  } catch { return []; }
+}
+
+function saveSession(session) {
+  const sessions = getSessions();
+  sessions.push(session);
+  localStorage.setItem('sjt_sessions', JSON.stringify(sessions));
+}
+
+function deleteSession(id) {
+  const sessions = getSessions().filter(s => s.id !== id);
+  localStorage.setItem('sjt_sessions', JSON.stringify(sessions));
+  renderRecords();
+  updateTodaySummary();
+}
+
+// ===== Records =====
+function renderRecords() {
+  const sessions = getSessions();
+  const filterDate = document.getElementById('dateFilter').value;
+  const filtered = filterDate
+    ? sessions.filter(s => s.date === filterDate)
+    : sessions;
+
+  // Sort newest first
+  filtered.sort((a, b) => new Date(b.startTime) - new Date(a.startTime));
+
+  const list = document.getElementById('recordList');
+
+  if (filtered.length === 0) {
+    list.innerHTML = '<div class="empty-state"><div class="empty-icon">📝</div><div>まだ記録がありません</div></div>';
+    document.getElementById('filteredTotal').textContent = '0時間0分';
+    return;
+  }
+
+  const totalDuration = filtered.reduce((sum, s) => sum + s.duration, 0);
+  document.getElementById('filteredTotal').textContent = formatDuration(totalDuration);
+
+  list.innerHTML = filtered.map(s => {
+    const start = new Date(s.startTime);
+    const end = new Date(s.endTime);
+    return '<div class="record-card">' +
+      '<div class="record-top">' +
+        '<span class="record-date">' + formatDateLabel(s.date) + '</span>' +
+        '<span class="record-duration">' + formatDuration(s.duration) + '</span>' +
+      '</div>' +
+      '<div class="record-times">' +
+        timeStr(start) + ' → ' + timeStr(end) +
+      '</div>' +
+      (s.memo ? '<div class="record-memo">' + escapeHtml(s.memo) + '</div>' : '') +
+      '<div style="text-align:right;margin-top:6px;">' +
+        '<button class="record-delete" onclick="deleteSession(\'' + s.id + '\')">削除</button>' +
+      '</div>' +
+    '</div>';
+  }).join('');
+}
+
+function updateTodaySummary() {
+  const today = toDateStr(new Date());
+  const sessions = getSessions().filter(s => s.date === today);
+  const total = sessions.reduce((sum, s) => sum + s.duration, 0);
+  document.getElementById('todaySessions').textContent = sessions.length;
+  document.getElementById('todayTotal').textContent = formatDuration(total);
+}
+
+function exportCSV() {
+  const sessions = getSessions();
+  if (sessions.length === 0) {
+    showToast('エクスポートするデータがありません');
+    return;
+  }
+
+  let csv = '\uFEFF日付,開始時刻,終了時刻,作業時間(分),メモ\n';
+  sessions.forEach(s => {
+    const start = new Date(s.startTime);
+    const end = new Date(s.endTime);
+    const mins = Math.round(s.duration / 60000);
+    const memo = (s.memo || '').replace(/"/g, '""');
+    csv += s.date + ',' + timeStr(start) + ',' + timeStr(end) + ',' + mins + ',"' + memo + '"\n';
+  });
+
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = '副業記録_' + toDateStr(new Date()) + '.csv';
+  a.click();
+  URL.revokeObjectURL(url);
+  showToast('CSVをダウンロードしました');
+}
+
+// ===== Utilities =====
+function generateId() {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+}
+
+function toDateStr(d) {
+  return d.getFullYear() + '-' +
+    String(d.getMonth() + 1).padStart(2, '0') + '-' +
+    String(d.getDate()).padStart(2, '0');
+}
+
+function timeStr(d) {
+  return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+}
+
+function formatTime(ms) {
+  const totalSec = Math.floor(ms / 1000);
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  const s = totalSec % 60;
+  return String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+}
+
+function formatDuration(ms) {
+  const totalMin = Math.floor(ms / 60000);
+  const h = Math.floor(totalMin / 60);
+  const m = totalMin % 60;
+  if (h > 0) return h + '時間' + m + '分';
+  return m + '分';
+}
+
+function formatDateLabel(dateStr) {
+  const d = new Date(dateStr + 'T00:00:00');
+  return (d.getMonth() + 1) + '/' + d.getDate() + ' (' + ['日','月','火','水','木','金','土'][d.getDay()] + ')';
+}
+
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+function showToast(msg) {
+  const toast = document.getElementById('toast');
+  toast.textContent = msg;
+  toast.classList.add('show');
+  setTimeout(() => toast.classList.remove('show'), 2500);
+}
+</script>
+</body>
+</html>
