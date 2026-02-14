@@ -618,6 +618,7 @@
 <script>
 // ===== Config =====
 const GAS_URL = 'https://script.google.com/macros/s/AKfycby1XBRdyfLsATDenHsvcwX0-guaVzcQEhgvqxjwVOvp-r5nRlhXxslSuGVFLSYhett1/exec';
+const ORIGINAL_TITLE = '副業タイムトラッカー';
 
 // ===== State =====
 let sessions = [];
@@ -629,9 +630,31 @@ let pomoIsWork = true;
 let pomoRunning = false;
 let pomoCompletedSets = 0;
 let pomoTotalWorkSeconds = 0;
+let pomoStartedAt = null;       // real timestamp when pomo started
+let pomoEndTarget = null;       // real timestamp when pomo should end
 const WORK_DURATION = 25 * 60;
 const BREAK_DURATION = 5 * 60;
 const CIRCUMFERENCE = 2 * Math.PI * 100;
+
+// ===== Web Worker for background timer =====
+let timerWorker = null;
+function createTimerWorker() {
+  const workerCode = `
+    let interval = null;
+    self.onmessage = function(e) {
+      if (e.data === 'start') {
+        if (interval) clearInterval(interval);
+        interval = setInterval(() => self.postMessage('tick'), 1000);
+      } else if (e.data === 'stop') {
+        if (interval) clearInterval(interval);
+        interval = null;
+      }
+    };
+  `;
+  const blob = new Blob([workerCode], { type: 'application/javascript' });
+  const worker = new Worker(URL.createObjectURL(blob));
+  return worker;
+}
 
 // ===== Init =====
 document.addEventListener('DOMContentLoaded', async () => {
@@ -641,11 +664,91 @@ document.addEventListener('DOMContentLoaded', async () => {
   updatePomoCircleSize();
   window.addEventListener('resize', updatePomoCircleSize);
 
+  // Request notification permission on first visit
+  requestNotificationPermission();
+
+  // Handle sleep/wake recovery
+  document.addEventListener('visibilitychange', onVisibilityChange);
+
   // Load data from cloud
   await loadFromCloud();
   updateTodaySummary();
   renderRecords();
 });
+
+// ===== Notification Permission =====
+function requestNotificationPermission() {
+  if ('Notification' in window && Notification.permission === 'default') {
+    // Show a prompt to request permission
+    showToast('通知を許可すると、タイマー終了時にお知らせします');
+    setTimeout(() => {
+      Notification.requestPermission();
+    }, 2000);
+  }
+}
+
+// ===== Sleep/Wake Recovery =====
+function onVisibilityChange() {
+  if (document.visibilityState === 'visible') {
+    // Page became visible again (wake from sleep, tab switch back)
+    recoverPomoTimer();
+    if (timerStart) updateTimerDisplay();
+  }
+}
+
+function recoverPomoTimer() {
+  if (!pomoRunning || !pomoEndTarget) return;
+
+  const now = Date.now();
+  const remainingMs = pomoEndTarget - now;
+  const remainingSec = Math.ceil(remainingMs / 1000);
+
+  if (remainingSec <= 0) {
+    // Timer already expired while sleeping
+    clearInterval(pomoInterval);
+    if (timerWorker) timerWorker.postMessage('stop');
+    pomoRemaining = 0;
+    updatePomoDisplay();
+    updateTitleBar();
+    playNotification();
+
+    if (pomoIsWork) {
+      pomoCompletedSets++;
+      pomoIsWork = false;
+      pomoRemaining = BREAK_DURATION;
+      showToast('お疲れさま！5分休憩しましょう');
+    } else {
+      pomoIsWork = true;
+      pomoRemaining = WORK_DURATION;
+      showToast('休憩終了！作業を再開しましょう');
+    }
+    updatePomoDisplay();
+    updateTitleBar();
+    pomoRunning = false;
+    pomoEndTarget = null;
+    document.getElementById('btnPomo').textContent = 'スタート';
+  } else {
+    // Correct the remaining time
+    pomoRemaining = remainingSec;
+    updatePomoDisplay();
+    updateTitleBar();
+  }
+}
+
+// ===== Title Bar =====
+function updateTitleBar() {
+  if (pomoRunning && pomoRemaining > 0) {
+    const mins = Math.floor(pomoRemaining / 60);
+    const secs = pomoRemaining % 60;
+    const label = pomoIsWork ? '作業' : '休憩';
+    document.title = `${label} ${String(mins).padStart(2,'0')}:${String(secs).padStart(2,'0')} - ${ORIGINAL_TITLE}`;
+  } else if (timerStart) {
+    const elapsed = Date.now() - timerStart;
+    document.title = `記録中 ${formatTime(elapsed)} - ${ORIGINAL_TITLE}`;
+  } else {
+    document.title = ORIGINAL_TITLE;
+  }
+}
 
 function updatePomoCircleSize() {
   const svg = document.getElementById('pomoSvg');
@@ -811,6 +914,7 @@ async function stopTimer() {
   document.getElementById('memoInput').value = '';
 
   updateTodaySummary();
+  updateTitleBar();
   showToast('作業を記録しました (' + formatDuration(duration) + ')');
 }
 
@@ -831,6 +935,7 @@ function updateTimerDisplay() {
   if (!timerStart) return;
   const elapsed = Date.now() - timerStart;
   document.getElementById('timerDisplay').textContent = formatTime(elapsed);
+  updateTitleBar();
 }
 
 // ===== Pomodoro =====
@@ -844,51 +949,87 @@ function togglePomodoro() {
 
 function startPomodoro() {
   pomoRunning = true;
+  pomoStartedAt = Date.now();
+  pomoEndTarget = pomoStartedAt + pomoRemaining * 1000;
   document.getElementById('btnPomo').textContent = '一時停止';
 
-  pomoInterval = setInterval(() => {
-    pomoRemaining--;
-    if (pomoIsWork) pomoTotalWorkSeconds++;
+  // Use Web Worker for reliable background ticking
+  try {
+    if (!timerWorker) {
+      timerWorker = createTimerWorker();
+      timerWorker.onmessage = () => pomoTick();
+    }
+    timerWorker.postMessage('start');
+  } catch (e) {
+    // Fallback to setInterval if Worker fails
+    console.warn('Web Worker not available, using setInterval');
+  }
+
+  pomoInterval = setInterval(() => pomoTick(), 1000);
+}
+
+function pomoTick() {
+  if (!pomoRunning || !pomoEndTarget) return;
+
+  // Use real time, not just decrement (handles sleep/background)
+  const now = Date.now();
+  const remainingMs = pomoEndTarget - now;
+  const remainingSec = Math.max(0, Math.ceil(remainingMs / 1000));
+  const elapsed = (pomoIsWork ? WORK_DURATION : BREAK_DURATION) - remainingSec;
+
+  pomoRemaining = remainingSec;
+  updatePomoDisplay();
+  updateTitleBar();
+
+  if (pomoRemaining <= 0) {
+    clearInterval(pomoInterval);
+    if (timerWorker) timerWorker.postMessage('stop');
+    playNotification();
+
+    if (pomoIsWork) {
+      pomoCompletedSets++;
+      pomoTotalWorkSeconds = pomoCompletedSets * WORK_DURATION;
+      pomoIsWork = false;
+      pomoRemaining = BREAK_DURATION;
+      showToast('お疲れさま！5分休憩しましょう');
+    } else {
+      pomoIsWork = true;
+      pomoRemaining = WORK_DURATION;
+      showToast('休憩終了！作業を再開しましょう');
+    }
 
     updatePomoDisplay();
-
-    if (pomoRemaining <= 0) {
-      clearInterval(pomoInterval);
-      playNotification();
-
-      if (pomoIsWork) {
-        pomoCompletedSets++;
-        pomoIsWork = false;
-        pomoRemaining = BREAK_DURATION;
-        showToast('お疲れさま！5分休憩しましょう');
-      } else {
-        pomoIsWork = true;
-        pomoRemaining = WORK_DURATION;
-        showToast('休憩終了！作業を再開しましょう');
-      }
-
-      updatePomoDisplay();
-      pomoRunning = false;
-      document.getElementById('btnPomo').textContent = 'スタート';
-    }
-  }, 1000);
+    updateTitleBar();
+    pomoRunning = false;
+    pomoEndTarget = null;
+    pomoStartedAt = null;
+    document.getElementById('btnPomo').textContent = 'スタート';
+  }
 }
 
 function pausePomodoro() {
   clearInterval(pomoInterval);
+  if (timerWorker) timerWorker.postMessage('stop');
   pomoRunning = false;
+  pomoEndTarget = null;
+  pomoStartedAt = null;
   document.getElementById('btnPomo').textContent = 'スタート';
+  updateTitleBar();
 }
 
 function resetPomodoro() {
   clearInterval(pomoInterval);
+  if (timerWorker) timerWorker.postMessage('stop');
   pomoRunning = false;
   pomoIsWork = true;
   pomoRemaining = WORK_DURATION;
   pomoCompletedSets = 0;
   pomoTotalWorkSeconds = 0;
+  pomoEndTarget = null;
+  pomoStartedAt = null;
   document.getElementById('btnPomo').textContent = 'スタート';
   updatePomoDisplay();
+  updateTitleBar();
 }
 
 function updatePomoDisplay() {
@@ -909,30 +1050,59 @@ function updatePomoDisplay() {
   label.className = 'pomo-label ' + (pomoIsWork ? 'work' : 'break');
 
   document.getElementById('pomoCount').textContent = pomoCompletedSets;
-  document.getElementById('pomoTotalWork').textContent = Math.floor(pomoTotalWorkSeconds / 60) + '分';
+  // Show real-time work minutes including current session
+  let displayWorkSec = pomoCompletedSets * WORK_DURATION;
+  if (pomoRunning && pomoIsWork && pomoEndTarget) {
+    const currentSessionElapsed = (pomoIsWork ? WORK_DURATION : BREAK_DURATION) - pomoRemaining;
+    displayWorkSec += currentSessionElapsed;
+  }
+  document.getElementById('pomoTotalWork').textContent = Math.floor(displayWorkSec / 60) + '分';
 }
 
 function playNotification() {
+  // Play sound: louder, repeated 3 times so you don't miss it
   try {
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
-    const notes = [523.25, 659.25, 783.99];
-    notes.forEach((freq, i) => {
+    const melody = [
+      [523.25, 0], [659.25, 0.2], [783.99, 0.4],
+      [523.25, 0.8], [659.25, 1.0], [783.99, 1.2],
+      [523.25, 1.6], [659.25, 1.8], [783.99, 2.0]
+    ];
+    melody.forEach(([freq, time]) => {
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
       osc.connect(gain);
       gain.connect(ctx.destination);
       osc.frequency.value = freq;
       osc.type = 'sine';
-      gain.gain.value = 0.3;
-      osc.start(ctx.currentTime + i * 0.2);
-      osc.stop(ctx.currentTime + i * 0.2 + 0.2);
+      gain.gain.value = 0.5;
+      gain.gain.setValueAtTime(0.5, ctx.currentTime + time);
+      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + time + 0.3);
+      osc.start(ctx.currentTime + time);
+      osc.stop(ctx.currentTime + time + 0.35);
     });
   } catch (e) {}
 
+  // Vibrate on mobile (if supported)
+  try {
+    if (navigator.vibrate) {
+      navigator.vibrate([200, 100, 200, 100, 200]);
+    }
+  } catch (e) {}
+
+  // Browser notification (works even in background tab)
   if ('Notification' in window && Notification.permission === 'granted') {
-    new Notification('副業タイムトラッカー', {
-      body: pomoIsWork ? 'お疲れさま！休憩しましょう' : '休憩終了！作業を再開しましょう'
+    const n = new Notification('副業タイムトラッカー', {
+      body: pomoIsWork ? 'お疲れさま！5分休憩しましょう' : '休憩終了！作業を再開しましょう',
+      icon: 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">🍅</text></svg>',
+      tag: 'pomo-timer',
+      requireInteraction: true
     });
+    // Click notification to focus the app
+    n.onclick = () => {
+      window.focus();
+      n.close();
+    };
   } else if ('Notification' in window && Notification.permission !== 'denied') {
     Notification.requestPermission();
   }
